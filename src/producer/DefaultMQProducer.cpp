@@ -16,6 +16,7 @@
  */
 
 #include "DefaultMQProducer.h"
+#include <MQVersion.h>
 
 #include "DefaultMQProducerImpl.h"
 
@@ -34,6 +35,17 @@ void DefaultMQProducer::start() {
 
 void DefaultMQProducer::shutdown() {
   impl->shutdown();
+}
+
+std::string DefaultMQProducer::version() {
+  std::string versions = impl->getClientVersionString();
+  /*
+  versions.append(", PROTOCOL VERSION: ")
+      .append(MQVersion::GetVersionDesc(MQVersion::s_CurrentVersion))
+      .append(", LANGUAGE: ")
+      .append(MQVersion::s_CurrentLanguage);
+  */
+  return versions;
 }
 
 // start mqclient set
@@ -168,7 +180,12 @@ void DefaultMQProducer::setUnitName(std::string unitName) {
 const std::string& DefaultMQProducer::getUnitName() const {
   return impl->getUnitName();
 }
-
+void DefaultMQProducer::setMessageTrace(bool messageTrace) {
+  impl->setMessageTrace(messageTrace);
+}
+bool DefaultMQProducer::getMessageTrace() const {
+  return impl->getMessageTrace();
+}
 SendResult DefaultMQProducer::send(MQMessage& msg, bool bSelectActiveBroker) {
   return impl->send(msg, bSelectActiveBroker);
 }

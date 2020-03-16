@@ -36,6 +36,7 @@ class ROCKETMQCLIENT_API DefaultMQPushConsumer {
 
   virtual void start();
   virtual void shutdown();
+  virtual std::string version();
 
   const std::string& getNamesrvAddr() const;
   void setNamesrvAddr(const std::string& namesrvAddr);
@@ -131,6 +132,8 @@ class ROCKETMQCLIENT_API DefaultMQPushConsumer {
   const std::string& getUnitName() const;
 
   void setAsyncPull(bool asyncFlag);
+  void setMessageTrace(bool messageTrace);
+  bool getMessageTrace() const;
 
  private:
   DefaultMQPushConsumerImpl* impl;

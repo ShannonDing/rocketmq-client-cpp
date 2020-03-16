@@ -17,6 +17,7 @@
 
 #include "DefaultMQPushConsumerImpl.h"
 #include "CommunicationMode.h"
+#include "ConsumeMessageHookImpl.h"
 #include "ConsumeMsgService.h"
 #include "ConsumerRunningInfo.h"
 #include "FilterAPI.h"
@@ -190,9 +191,9 @@ class AsyncPullCallback : public PullCallback {
   bool m_bShutdown;
 };
 
-//<!***************************************************************************
 static boost::mutex m_asyncCallbackLock;
 
+DefaultMQPushConsumerImpl::DefaultMQPushConsumerImpl() {}
 DefaultMQPushConsumerImpl::DefaultMQPushConsumerImpl(const string& groupname)
     : m_consumeFromWhere(CONSUME_FROM_LAST_OFFSET),
       m_pOffsetStore(NULL),
@@ -307,12 +308,15 @@ void DefaultMQPushConsumerImpl::start() {
   sa.sa_flags = 0;
   sigaction(SIGPIPE, &sa, 0);
 #endif
+  LOG_WARN("###Current Push Consumer@%s", getClientVersionString().c_str());
   // deal with name space before start
   dealWithNameSpace();
+  logConfigs();
   switch (m_serviceState) {
     case CREATE_JUST: {
       m_serviceState = START_FAILED;
       DefaultMQClient::start();
+      dealWithMessageTrace();
       LOG_INFO("DefaultMQPushConsumerImpl:%s start", m_GroupName.c_str());
 
       //<!data;
@@ -397,6 +401,7 @@ void DefaultMQPushConsumerImpl::shutdown() {
   switch (m_serviceState) {
     case RUNNING: {
       LOG_INFO("DefaultMQPushConsumerImpl shutdown");
+      shutdownMessageTraceInnerProducer();
       m_async_ioService.stop();
       m_async_service_thread->interrupt();
       m_async_service_thread->join();
@@ -1038,5 +1043,125 @@ bool DefaultMQPushConsumerImpl::dealWithNameSpace() {
 
   return true;
 }
-//<!************************************************************************
+void DefaultMQPushConsumerImpl::logConfigs() {
+  showClientConfigs();
+
+  LOG_WARN("MessageModel:%d", m_messageModel);
+  LOG_WARN("MessageModel:%s", m_messageModel == BROADCASTING ? "BROADCASTING" : "CLUSTERING");
+
+  LOG_WARN("ConsumeFromWhere:%d", m_consumeFromWhere);
+  switch (m_consumeFromWhere) {
+    case CONSUME_FROM_FIRST_OFFSET:
+      LOG_WARN("ConsumeFromWhere:%s", "CONSUME_FROM_FIRST_OFFSET");
+      break;
+    case CONSUME_FROM_LAST_OFFSET:
+      LOG_WARN("ConsumeFromWhere:%s", "CONSUME_FROM_LAST_OFFSET");
+      break;
+
+    case CONSUME_FROM_TIMESTAMP:
+      LOG_WARN("ConsumeFromWhere:%s", "CONSUME_FROM_TIMESTAMP");
+      break;
+    case CONSUME_FROM_LAST_OFFSET_AND_FROM_MIN_WHEN_BOOT_FIRST:
+      LOG_WARN("ConsumeFromWhere:%s", "CONSUME_FROM_LAST_OFFSET_AND_FROM_MIN_WHEN_BOOT_FIRST");
+      break;
+    case CONSUME_FROM_MAX_OFFSET:
+      LOG_WARN("ConsumeFromWhere:%s", "CONSUME_FROM_MAX_OFFSET");
+      break;
+    case CONSUME_FROM_MIN_OFFSET:
+      LOG_WARN("ConsumeFromWhere:%s", "CONSUME_FROM_MAX_OFFSET");
+      break;
+    default:
+      LOG_WARN("ConsumeFromWhere:%s", "UnKnown.");
+      break;
+  }
+  LOG_WARN("ConsumeThreadCount:%d", m_consumeThreadCount);
+  LOG_WARN("ConsumeMessageBatchMaxSize:%d", m_consumeMessageBatchMaxSize);
+  LOG_WARN("MaxMsgCacheSizePerQueue:%d", m_maxMsgCacheSize);
+  LOG_WARN("MaxReconsumeTimes:%d", m_maxReconsumeTimes);
+  LOG_WARN("PullMsgThreadPoolNum:%d", m_pullMsgThreadPoolNum);
+  LOG_WARN("AsyncPullMode:%s", m_asyncPull ? "true" : "false");
+  LOG_WARN("AsyncPullTimeout:%d ms", m_asyncPullTimeout);
+}
+// we should create trace message poll before producer send messages.
+bool DefaultMQPushConsumerImpl::dealWithMessageTrace() {
+  if (!getMessageTrace()) {
+    LOG_INFO("Message Trace set to false, Will not send trace messages.");
+    return false;
+  }
+  // Try to create default producer inner.
+  LOG_INFO("DefaultMQPushConsumer Open message trace..");
+
+  createMessageTraceInnerProducer();
+  std::shared_ptr<ConsumeMessageHook> hook(new ConsumeMessageHookImpl());
+  registerConsumeMessageHook(hook);
+  return true;
+}
+
+void DefaultMQPushConsumerImpl::createMessageTraceInnerProducer() {
+  m_DefaultMQProducerImpl = std::make_shared<DefaultMQProducerImpl>(getGroupName());
+  m_DefaultMQProducerImpl->setMessageTrace(false);
+  m_DefaultMQProducerImpl->setInstanceName(getInstanceName());
+  const SessionCredentials& session = getSessionCredentials();
+  m_DefaultMQProducerImpl->setSessionCredentials(session.getAccessKey(), session.getSecretKey(),
+                                                 session.getAuthChannel());
+  if (!getNamesrvAddr().empty()) {
+    m_DefaultMQProducerImpl->setNamesrvAddr(getNamesrvAddr());
+  }
+  m_DefaultMQProducerImpl->setNameSpace(getNameSpace());
+  // m_DefaultMQProducerImpl->setNamesrvDomain(getNamesrvDomain());
+  m_DefaultMQProducerImpl->start(false);
+}
+void DefaultMQPushConsumerImpl::shutdownMessageTraceInnerProducer() {
+  LOG_INFO("Shutdown Message Trace Inner Producer In Consumer.");
+  m_DefaultMQProducerImpl->shutdown(false);
+}
+bool DefaultMQPushConsumerImpl::hasConsumeMessageHook() {
+  return !m_consumeMessageHookList.empty();
+}
+
+void DefaultMQPushConsumerImpl::registerConsumeMessageHook(std::shared_ptr<ConsumeMessageHook>& hook) {
+  m_consumeMessageHookList.push_back(hook);
+  LOG_INFO("Register ConsumeMessageHook success,hookname is %s", hook->getHookName().c_str());
+}
+
+void DefaultMQPushConsumerImpl::executeConsumeMessageHookBefore(ConsumeMessageContext* context) {
+  if (!m_consumeMessageHookList.empty()) {
+    std::vector<std::shared_ptr<ConsumeMessageHook>>::iterator it = m_consumeMessageHookList.begin();
+    for (; it != m_consumeMessageHookList.end(); ++it) {
+      try {
+        (*it)->executeHookBefore(context);
+      } catch (exception e) {
+      }
+    }
+  }
+}
+
+void DefaultMQPushConsumerImpl::executeConsumeMessageHookAfter(ConsumeMessageContext* context) {
+  if (!m_consumeMessageHookList.empty()) {
+    std::vector<std::shared_ptr<ConsumeMessageHook>>::iterator it = m_consumeMessageHookList.begin();
+    for (; it != m_consumeMessageHookList.end(); ++it) {
+      try {
+        (*it)->executeHookAfter(context);
+      } catch (exception e) {
+      }
+    }
+  }
+}
+
+void DefaultMQPushConsumerImpl::submitSendTraceRequest(MQMessage& msg, SendCallback* pSendCallback) {
+  if (getMessageTrace()) {
+    try {
+      LOG_DEBUG("=====Send Trace Messages,Topic[%s],Key[%s],Body[%s]", msg.getTopic().c_str(), msg.getKeys().c_str(),
+                msg.getBody().c_str());
+      // m_DefaultMQProducerImpl->submitSendTraceRequest(msg, pSendCallback);
+      m_DefaultMQProducerImpl->send(msg, pSendCallback, false);
+    } catch (exception e) {
+      LOG_INFO(e.what());
+    }
+  }
+}
+
+void DefaultMQPushConsumerImpl::setDefaultMqProducerImpl(DefaultMQProducerImpl* DefaultMqProducerImpl) {
+  m_DefaultMQProducerImpl.reset(DefaultMqProducerImpl);
+}
 }  // namespace rocketmq

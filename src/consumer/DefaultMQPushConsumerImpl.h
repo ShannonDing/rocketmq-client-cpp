@@ -26,6 +26,9 @@
 #include <boost/thread/thread.hpp>
 #include <string>
 #include "AsyncCallback.h"
+#include "ConsumeMessageContext.h"
+#include "ConsumeMessageHook.h"
+#include "DefaultMQProducerImpl.h"
 #include "MQConsumer.h"
 #include "MQMessageListener.h"
 #include "MQMessageQueue.h"
@@ -45,6 +48,7 @@ class ConsumerRunningInfo;
 //<!***************************************************************************
 class DefaultMQPushConsumerImpl : public MQConsumer {
  public:
+  DefaultMQPushConsumerImpl();
   DefaultMQPushConsumerImpl(const std::string& groupname);
   void boost_asio_work();
   virtual ~DefaultMQPushConsumerImpl();
@@ -127,12 +131,24 @@ class DefaultMQPushConsumerImpl : public MQConsumer {
   */
   void setMaxCacheMsgSizePerQueue(int maxCacheSize);
   int getMaxCacheMsgSizePerQueue() const;
+  void submitSendTraceRequest(MQMessage& msg, SendCallback* pSendCallback);
+  bool hasConsumeMessageHook();
+
+  void registerConsumeMessageHook(std::shared_ptr<ConsumeMessageHook>& hook);
+  void setDefaultMqProducerImpl(DefaultMQProducerImpl* DefaultMqProducerImpl);
+  void executeConsumeMessageHookBefore(ConsumeMessageContext* context);
+  void executeConsumeMessageHookAfter(ConsumeMessageContext* context);
 
  private:
   void checkConfig();
   void copySubscription();
   void updateTopicSubscribeInfoWhenSubscriptionChanged();
   bool dealWithNameSpace();
+  void logConfigs();
+
+  bool dealWithMessageTrace();
+  void createMessageTraceInnerProducer();
+  void shutdownMessageTraceInnerProducer();
 
  private:
   uint64_t m_startTime;
@@ -159,6 +175,10 @@ class DefaultMQPushConsumerImpl : public MQConsumer {
  private:
   TaskQueue* m_pullmsgQueue;
   std::unique_ptr<boost::thread> m_pullmsgThread;
+
+  // used for trace
+  std::vector<std::shared_ptr<ConsumeMessageHook> > m_consumeMessageHookList;
+  std::shared_ptr<DefaultMQProducerImpl> m_DefaultMQProducerImpl;
 };
 //<!***************************************************************************
 }  // namespace rocketmq

@@ -41,6 +41,7 @@ class DefaultMQClient {
 
  public:
   // clientid=processId-ipAddr@instanceName;
+  std::string getClientVersionString() const;
   std::string getMQClientId() const;
   const std::string& getNamesrvAddr() const;
   void setNamesrvAddr(const std::string& namesrvAddr);
@@ -169,11 +170,16 @@ class DefaultMQClient {
 
   virtual void setFactory(MQClientFactory*);
 
+  bool getMessageTrace() const;
+
+  void setMessageTrace(bool mMessageTrace);
+
  protected:
   virtual void start();
   virtual void shutdown();
   MQClientFactory* getFactory() const;
   virtual bool isServiceStateOk();
+  void showClientConfigs();
 
  protected:
   std::string m_namesrvAddr;
@@ -189,6 +195,7 @@ class DefaultMQClient {
 
   std::string m_unitName;
   SessionCredentials m_SessionCredentials;
+  bool m_messageTrace;
 };
 //<!***************************************************************************
 }  // namespace rocketmq
